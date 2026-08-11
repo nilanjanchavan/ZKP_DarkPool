@@ -32,6 +32,8 @@ Live link - https://zkp-dark-pool.vercel.app/
 ├── contracts/            # Solidity smart contracts
 ├── scripts/              # Hardhat deployment scripts (deploy.cjs)
 └── run-matcher.ts        # Off-chain order matching engine
+```
+
 🚀 Getting Started
 To run this project locally, you will need two separate terminal windows—one for the React frontend and one for the off-chain matching engine.
 
