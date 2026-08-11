@@ -1,0 +1,27 @@
+{
+  "name": "zk-darkpool",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ZK-KYC Dark Pool — institutional privacy-preserving trading on Sepolia",
+  "scripts": {
+    "start": "ts-node run-matcher.ts",
+    "compile:circuits": "node scripts/compile-circuits.js",
+    "compile": "node scripts/compile-circuits.js",
+    "build:circuits": "node scripts/compile-circuits.js"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "circom": "0.5.46",
+    "circomlib": "^2.0.5",
+    "hardhat": "^2.29.0",
+    "snarkjs": "^0.7.4"
+  },
+  "dependencies": {
+    "@chainlink/contracts": "^1.5.0",
+    "@openzeppelin/contracts": "^5.6.1",
+    "dotenv": "^17.4.2",
+    "ethers": "^6.17.0",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.3"
+  }
+}

@@ -1,0 +1,11 @@
+# Local environments
+.env
+.env.local
+
+# Node modules
+node_modules/
+
+# Hardhat files
+artifacts/
+cache/
+typechain-types/

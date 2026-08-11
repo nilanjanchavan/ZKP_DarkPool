@@ -1,0 +1,24 @@
+/* Global reset — strip default browser spacing and enforce a flat 2D layout. */
+*,
+*::before,
+*::after {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+/* Viewport constraints — span exactly the viewport, never scroll horizontally. */
+html,
+body {
+  width: 100%;
+  min-height: 100vh;
+  overflow-x: hidden;
+  background-color: #0a0c16; /* matches the app page background so edges blend */
+  color: #e6e8f0;
+}
+
+#root {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+}

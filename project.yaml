@@ -1,0 +1,10 @@
+# project.yaml
+staging-settings:
+  rpcs:
+    - chain-name: "ethereum-testnet-sepolia"
+      url: "https://ethereum-sepolia-rpc.publicnode.com"
+
+production-settings:
+  rpcs:
+    - chain-name: "ethereum-mainnet"
+      url: "${MAINNET_RPC_URL}"
