@@ -1,0 +1,32 @@
+{
+  "chainId": 31337,
+  "name": "Hardhat Localhost",
+  "rpcUrl": "http://127.0.0.1:8545",
+  "explorerUrl": "http://127.0.0.1:8545",
+  "poolAddress": "0x35A8FfB2de99933d88e1ceCF6755AA2b95Fb3847",
+  "poolFromBlock": 9,
+  "verifierAddress": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
+  "adapterAddress": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+  "automationRegistry": "0x33F2044CaC5c097D890B9771CAD52213e08F710b",
+  "ethUsdFeed": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+  "linkUsdFeed": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+  "linkToken": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+  "prices": {
+    "ETH_USD": 3000,
+    "LINK_USD": 15
+  },
+  "tokens": [
+    {
+      "symbol": "ETH",
+      "address": "0x0000000000000000000000000000000000000000",
+      "decimals": 18,
+      "oracle": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+    },
+    {
+      "symbol": "LINK",
+      "address": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9",
+      "decimals": 18,
+      "oracle": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+    }
+  ]
+}

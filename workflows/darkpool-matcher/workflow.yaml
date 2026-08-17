@@ -2,15 +2,17 @@
 staging-settings:
   user-workflow:
     workflow-name: "darkpool-matcher-staging"
-    workflow-artifacts:
-      workflow-path: "./main.ts"
-      config-path: "./config.staging.json"
-      secrets-path: ""
+    # deployment-registry: "private" # Optional: default onchain registry
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: "./config.staging.json"
+    secrets-path: ""
 
 production-settings:
   user-workflow:
     workflow-name: "darkpool-matcher-prod"
-    workflow-artifacts:
-      workflow-path: "./main.ts"
-      config-path: "./config.production.json"
-      secrets-path: ""
+    # deployment-registry: "onchain:ethereum-testnet-sepolia" # Optional: default onchain registry
+  workflow-artifacts:
+    workflow-path: "./main.ts"
+    config-path: "./config.production.json"
+    secrets-path: ""

@@ -2,8 +2,8 @@
   "schedule": "*/30 * * * * *",
   "chainSelectorName": "ethereum-testnet-sepolia",
   "priceFeedAddress": "0x694AA1769357215DE4FAC081bf1f309aDC325306",
-  "darkPoolAddress": "0xAaCE917c4299FEAE3e4F1a5E8A1E87561D7c345F",
-  "receiverAddress": "0xAaCE917c4299FEAE3e4F1a5E8A1E87561D7c345F",
+  "darkPoolAddress": "0x35A8FfB2de99933d88e1ceCF6755AA2b95Fb3847",
+  "receiverAddress": "0xD73c4041015008695308d4DE1E8512ADc02b0Ab9",
   "forwarderAddress": "0xSEPOLIA_KEYSTONE_FORWARDER",
   "gasLimit": "4000000"
 }
