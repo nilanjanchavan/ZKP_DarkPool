@@ -61,12 +61,6 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
     error SameToken();
     error IncorrectEthValue();
     error UnsupportedToken();
-    error OnlyAutomationRegistry();
-
-    modifier onlyAutomationRegistry() {
-        if (msg.sender != automationRegistry) revert OnlyAutomationRegistry();
-        _;
-    }
 
     constructor(
         address _ethUsdFeed,
@@ -192,7 +186,11 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
         return (false, bytes(""));
     }
 
-    function performUpkeep(bytes calldata performData) external override onlyAutomationRegistry whenNotPaused nonReentrant {
+    /// @notice Executes a matched pair. No caller restriction: the demo runs
+    ///         the local matcher wallet (run-matcher.ts) which calls this
+    ///         directly. The CRE adapter / chainlink automation remains wired
+    ///         via `automationRegistry` but is no longer required to trigger.
+    function performUpkeep(bytes calldata performData) external override whenNotPaused nonReentrant {
         (uint256 orderAId, uint256 orderBId) = abi.decode(performData, (uint256, uint256));
         _executePair(orderAId, orderBId);
     }

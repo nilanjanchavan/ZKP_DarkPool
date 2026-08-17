@@ -23,16 +23,15 @@ describe("Integration — Pair matching via performUpkeep", function () {
     return { trader, trader2 };
   }
 
-  it("only allows the automation registry to perform upkeep", async function () {
-    const { pool, trader, linkAddress } = fixtures;
-    await pool
-      .connect(trader)
-      .submitOrder("0x01", nullifierFor("batch-auth"), ETH, linkAddress, PAIR.ethAmount, { value: PAIR.ethAmount });
+  it("lets any wallet (e.g. the local matcher) perform upkeep directly", async function () {
+    const { pool, linkToken, linkAddress } = fixtures;
+    await submitBalancedPair(pool, linkToken, linkAddress);
+    const matcher = (await ethers.getSigners())[5]; // not the configured registry
 
-    await expect(pool.connect(trader).performUpkeep("0x00")).to.be.revertedWithCustomError(
-      pool,
-      "OnlyAutomationRegistry"
-    );
+    const { performData } = await pool.connect(matcher).checkUpkeep("0x");
+    await expect(pool.connect(matcher).performUpkeep(performData)).to.emit(pool, "OrderMatched");
+    expect((await pool.orders(0)).active).to.equal(false);
+    expect((await pool.orders(1)).active).to.equal(false);
   });
 
   it("executes both sides of a complementary pair and transfers assets", async function () {

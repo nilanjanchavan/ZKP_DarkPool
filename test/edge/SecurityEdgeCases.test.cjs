@@ -189,7 +189,7 @@ describe("Edge — Adapter authorization", function () {
       .reverted;
   });
 
-  it("is the only registry once rewired — the former registry is rejected", async function () {
+  it("lets the demo matcher perform upkeep directly after rewiring to the adapter", async function () {
     const { pool, automation, linkAddress, linkToken } = fixtures;
 
     await pool.connect(automation).submitOrder("0x01", nullifierFor("adapter-guard-a"), ETH, linkAddress, PAIR.ethAmount, {
@@ -199,10 +199,10 @@ describe("Edge — Adapter authorization", function () {
     await linkToken.connect(trader2).approve(await pool.getAddress(), ethers.MaxUint256);
     await pool.connect(trader2).submitOrder("0x01", nullifierFor("adapter-guard-b"), linkAddress, ETH, PAIR.linkAmount);
 
-    // The plain automation signer was replaced by the adapter when rewired.
-    await expect(pool.connect(automation).performUpkeep("0x00")).to.be.revertedWithCustomError(
-      pool,
-      "OnlyAutomationRegistry"
-    );
+    // performUpkeep is no longer gated by automationRegistry: after the adapter
+    // took the registry slot, the former registry signer is a plain wallet, yet
+    // it can still trigger a match directly — the local matcher demo path.
+    const { performData } = await pool.connect(automation).checkUpkeep("0x");
+    await expect(pool.connect(automation).performUpkeep(performData)).to.emit(pool, "OrderMatched");
   });
 });

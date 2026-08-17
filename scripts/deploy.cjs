@@ -112,10 +112,13 @@ async function main() {
   );
   await darkPool.waitForDeployment();
   const darkPoolAddress = await darkPool.getAddress();
+  const deployReceipt = await darkPool.deploymentTransaction().wait();
+  const creationBlock = deployReceipt.blockNumber;
 
   console.log("\n========================================");
   console.log(`ZKDarkPool deployed to: ${darkPoolAddress}`);
   console.log(`chainId            : ${chainId} (${network.name})`);
+  console.log(`creation block     : ${creationBlock}`);
   console.log(`ethUsdFeed         : ${ethUsdFeed}`);
   console.log(`linkUsdFeed        : ${linkUsdFeed}`);
   console.log(`linkToken          : ${linkTokenAddress}`);
