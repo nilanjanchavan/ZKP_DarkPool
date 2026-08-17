@@ -214,7 +214,7 @@ export default function TradingTerminal({ account, network }: TradingTerminalPro
 
       // MockZKVerifier accepts any proof (public-input count == 4); swap in a
       // real Groth16 proof here once the real Verifier is wired to the pool.
-      const proof = "0x";
+      const proof = "0x" + "00".repeat(128); // Or match the expected byte length of your verifier adapter
 
       const tx = await pool.submitOrder(
         proof,
