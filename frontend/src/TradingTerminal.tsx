@@ -212,9 +212,11 @@ export default function TradingTerminal({ account, network }: TradingTerminalPro
       const signer = await provider.getSigner();
       const pool = new Contract(network.POOL_ADDRESS, ZK_POOL_ABI, signer);
 
-      // MockZKVerifier accepts any proof (public-input count == 4); swap in a
-      // real Groth16 proof here once the real Verifier is wired to the pool.
-      const proof = "0x" + "00".repeat(128); // Or match the expected byte length of your verifier adapter
+      // Demo mode: the pool runs the MockZKVerifier, which accepts any proof
+      // as long as it carries 4 public inputs, so a zero-length proof passes
+      // on-chain. Swap in a real Groth16 proof here once a real Verifier
+      // (SnarkVerifierAdapter) is wired back to the pool.
+      const proof = "0x";
 
       const tx = await pool.submitOrder(
         proof,

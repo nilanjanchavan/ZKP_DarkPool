@@ -2,6 +2,22 @@ require("ts-node/register");
 const hre = require("hardhat");
 const { getNetwork, ZERO_ADDRESS } = require("../config/networks");
 
+/**
+ * ZKDarkPool deployment + wiring script.
+ *
+ * Two modes:
+ *  1) Fresh deploy (default)       — deploys a new MockZKVerifier and a new
+ *                                     ZKDarkPool wired to it.
+ *  2) Wire existing pool           — set POOL_ADDRESS=<existing pool>. Skips
+ *                                     the pool deploy and just re-points the
+ *                                     pool's zkVerifier to a MockZKVerifier,
+ *                                     then reads it back to confirm.
+ *
+ * The demo/testnet verifier is MockZKVerifier: it accepts any proof as long as
+ * publicInputs.length == 4, so zero-length proofs ("0x") pass on-chain without
+ * errors. Override with VERIFIER_ADDRESS=<addr> to wire a different verifier
+ * (e.g. a real SnarkVerifierAdapter) instead of deploying a fresh mock.
+ */
 async function main() {
   const [deployer] = await hre.ethers.getSigners();
   console.log("Deployer:", deployer.address);
@@ -31,25 +47,61 @@ async function main() {
   }
   console.log("automationRegistry (signer):", triggerAddress);
 
+  console.log("\n[1/2a] Verifier (MockZKVerifier)…");
+  const MockZKVerifier = await hre.ethers.getContractFactory("MockZKVerifier");
+  let verifierAddress = process.env.VERIFIER_ADDRESS;
+  if (verifierAddress) {
+    console.log(`  VERIFIER_ADDRESS override -> ${verifierAddress}`);
+  } else {
+    const verifier = await MockZKVerifier.deploy();
+    await verifier.waitForDeployment();
+    verifierAddress = await verifier.getAddress();
+    console.log(`  MockZKVerifier deployed -> ${verifierAddress}`);
+  }
+
+  const poolAddress = process.env.POOL_ADDRESS;
+
+  if (poolAddress) {
+    // ---- Mode 2: wire an existing pool's zkVerifier ----
+    console.log("\n[2/2] Wiring existing pool…");
+    const pool = await hre.ethers.getContractAt("ZKDarkPool", poolAddress, deployer);
+    console.log(`  pool          : ${poolAddress}`);
+    const before = await pool.zkVerifier();
+    console.log(`  zkVerifier before: ${before}`);
+    if (before.toLowerCase() !== verifierAddress.toLowerCase()) {
+      const tx = await pool.setVerifier(verifierAddress);
+      await tx.wait();
+      console.log("  setVerifier tx:", tx.hash);
+    } else {
+      console.log("  already wired; skipping tx");
+    }
+    const after = await pool.zkVerifier();
+    console.log(`  zkVerifier after : ${after}`);
+    if (after.toLowerCase() !== verifierAddress.toLowerCase()) {
+      throw new Error(`READ-BACK MISMATCH: expected ${verifierAddress}, got ${after}`);
+    }
+    console.log("  VERIFIED: pool.zkVerifier === verifier");
+
+    console.log("\n========================================");
+    console.log(`ZKDarkPool wired to: ${poolAddress}`);
+    console.log(`chainId    : ${chainId} (${network.name})`);
+    console.log(`zkVerifier : ${verifierAddress} (MockZKVerifier — accepts 0x proofs for demo)`);
+    console.log("========================================\n");
+    return;
+  }
+
+  // ---- Mode 1: fresh pool deployment ----
   // Pull Chainlink feeds + token addresses for this network from networks.ts.
   const ethToken = network.SUPPORTED_TOKENS.find((t) => t.tokenAddress === ZERO_ADDRESS);
   const linkToken = network.SUPPORTED_TOKENS.find((t) => t.symbol === "LINK");
   const ethUsdFeed = ethToken?.chainlinkOracleAddress ?? hre.ethers.ZeroAddress;
   const linkUsdFeed = linkToken?.chainlinkOracleAddress ?? hre.ethers.ZeroAddress;
   const linkTokenAddress = linkToken?.tokenAddress ?? hre.ethers.ZeroAddress;
-  console.log("ethUsdFeed  :", ethUsdFeed);
+  console.log("\nethUsdFeed  :", ethUsdFeed);
   console.log("linkUsdFeed :", linkUsdFeed);
   console.log("linkToken   :", linkTokenAddress);
 
-  console.log("\n[1/2] Deploying ZK verifier…");
-  const MockZKVerifier = await hre.ethers.getContractFactory("MockZKVerifier");
-  const verifier = await MockZKVerifier.deploy();
-  await verifier.waitForDeployment();
-  const verifierAddress = await verifier.getAddress();
-  console.log(`  MockZKVerifier -> ${verifierAddress}`);
-
-  // Constructor order matters: (ethUsdFeed, linkUsdFeed, linkToken, zkVerifier, automationRegistry).
-  console.log("\n[2/2] Deploying ZKDarkPool…");
+  console.log("\n[2/2b] Deploying ZKDarkPool…");
   const ZKDarkPool = await hre.ethers.getContractFactory("ZKDarkPool");
   const darkPool = await ZKDarkPool.deploy(
     ethUsdFeed,

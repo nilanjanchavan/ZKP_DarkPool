@@ -5,7 +5,7 @@
   "explorerUrl": "http://127.0.0.1:8545",
   "poolAddress": "0x35A8FfB2de99933d88e1ceCF6755AA2b95Fb3847",
   "poolFromBlock": 9,
-  "verifierAddress": "0x0165878A594ca255338adfa4d48449f69242Eb8F",
+  "verifierAddress": "0x668cCC6332824F7a0e877EBEA107243089d55b9E",
   "adapterAddress": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
   "automationRegistry": "0x33F2044CaC5c097D890B9771CAD52213e08F710b",
   "ethUsdFeed": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
