@@ -35,7 +35,9 @@ contract MockZKVerifier {
         if (!shouldVerify) return false;
         bytes32 proofHash = keccak256(abi.encode(proof, publicInputs));
         if (validProofs[proofHash]) return true;
-        return publicInputs.length == 4;
+        // Mirrors the real circuit's public-input shape so non-ZK tests can
+        // keep passing: [nullifier, amountIn, tokenIn, tokenOut, sender].
+        return publicInputs.length == 5;
     }
 
     function isNullifierUsed(uint256 nullifier) external view returns (bool) {

@@ -28,6 +28,37 @@ export interface NetworkConfig {
 export const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
 
 export const NETWORKS: Record<number, NetworkConfig> = {
+  // Local Hardhat node. Addresses are deliberately NOT hardcoded here — every
+  // `npx hardhat node` restart is a fresh empty chain, so the deployed pool /
+  // mock feeds / mock LINK live in frontend/public/local-addresses.json
+  // (written by scripts/deploy.cjs when chainId === 31337). The frontend reads
+  // that file at runtime in dev mode and overlays these placeholders.
+  31337: {
+    chainId: 31337,
+    name: "Hardhat Localhost",
+    POOL_ADDRESS: "0x0000000000000000000000000000000000000000", // TODO: see local-addresses.json
+    RPC_URL: "http://127.0.0.1:8545",
+    EXPLORER_URL: "http://127.0.0.1:8545",
+    POOL_FROM_BLOCK: 0,
+    SUPPORTED_TOKENS: [
+      {
+        symbol: "ETH",
+        tokenAddress: ZERO_ADDRESS,
+        decimals: 18,
+        // TODO: mock ETH/USD feed address from local-addresses.json
+        chainlinkOracleAddress: ZERO_ADDRESS,
+      },
+      {
+        symbol: "LINK",
+        // TODO: mock LINK token address from local-addresses.json
+        tokenAddress: ZERO_ADDRESS,
+        decimals: 18,
+        // TODO: mock LINK/USD feed address from local-addresses.json
+        chainlinkOracleAddress: ZERO_ADDRESS,
+      },
+    ],
+  },
+
   // Ethereum Mainnet
   1: {
     chainId: 1,
@@ -92,10 +123,10 @@ export const NETWORKS: Record<number, NetworkConfig> = {
   11155111: {
     chainId: 11155111,
     name: "Sepolia Testnet",
-    POOL_ADDRESS: "0x97Ca219d853B4AAc2cAf6CE2186e9F669393B035", // TODO: redeploy with the multi-asset contract
+    POOL_ADDRESS: "0xE63fa26fB371b212a66d986f50b462CDC4D3b550",
     RPC_URL: "https://ethereum-sepolia-rpc.publicnode.com",
     EXPLORER_URL: "https://sepolia.etherscan.io",
-    POOL_FROM_BLOCK: 11465000,
+    POOL_FROM_BLOCK: 11507135,
     SUPPORTED_TOKENS: [
       {
         symbol: "ETH",

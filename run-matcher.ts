@@ -1,25 +1,105 @@
 import "dotenv/config";
+import fs from "fs";
+import path from "path";
 import { ethers } from "ethers";
 import { DEFAULT_NETWORK, getNetwork, ZERO_ADDRESS } from "./config/networks";
 
+const LOCAL_ADDRESSES_PATH = path.join(__dirname, "frontend", "public", "local-addresses.json");
+
 const CHAIN_ID = Number(process.env.CHAIN_ID || DEFAULT_NETWORK.chainId);
-const network = getNetwork(CHAIN_ID);
+let network = getNetwork(CHAIN_ID);
 if (!network) {
   throw new Error(`Unsupported CHAIN_ID ${CHAIN_ID}. Add it to config/networks.ts first.`);
 }
 
-const RPC_URL = network.RPC_URL;
-const POOL_ADDRESS = network.POOL_ADDRESS;
+/**
+ * Local (31337) deployments live in frontend/public/local-addresses.json
+ * (written by scripts/deploy.cjs after every `npx hardhat node` restart).
+ * The 31337 skeleton in config/networks.ts deliberately holds zero
+ * placeholders, so overlay the live addresses here just like the frontend does.
+ */
+interface LocalAddresses {
+  poolAddress: string;
+  rpcUrl?: string;
+  tokens: Array<{ symbol: string; address: string; oracle: string }>;
+}
+const localAddresses: LocalAddresses = { poolAddress: "", tokens: [] };
+if (CHAIN_ID === 31337) {
+  let disk: LocalAddresses | null = null;
+  try {
+    disk = JSON.parse(fs.readFileSync(LOCAL_ADDRESSES_PATH, "utf8")) as LocalAddresses;
+  } catch {
+    throw new Error(
+      `CHAIN_ID=31337 requires frontend/public/local-addresses.json (run scripts/deploy.cjs against a fresh hardhat node first).`
+    );
+  }
+  Object.assign(localAddresses, disk);
+  network = {
+    ...network,
+    POOL_ADDRESS: localAddresses.poolAddress,
+    RPC_URL: localAddresses.rpcUrl || network.RPC_URL,
+    SUPPORTED_TOKENS: network.SUPPORTED_TOKENS.map((token) => {
+      const live = localAddresses.tokens.find((t) => t.symbol === token.symbol);
+      return live
+        ? { ...token, tokenAddress: live.address, chainlinkOracleAddress: live.oracle }
+        : token;
+    }),
+  };
+}
+
+const RPC_URL = network!.RPC_URL;
+const POOL_ADDRESS = network!.POOL_ADDRESS;
 const PERFORM_GAS_LIMIT = 3_000_000n;
 const TICK_INTERVAL_MS = Number(process.env.MATCH_INTERVAL_MS || 60_000);
-const MATCH_TOLERANCE_BPS = 100n; // 1%, mirrors the pool's MATCH_TOLERANCE constant
+// Mirrors the pool's MATCH_TOLERANCE (1e16 = 1%) and _withinTolerance math:
+// diff * 1e18 <= ((valueA + valueB) / 2) * MATCH_TOLERANCE.
+const MATCH_TOLERANCE = 10n ** 16n;
+
+/**
+ * Re-reads frontend/public/local-addresses.json from disk (it is rewritten by
+ * scripts/deploy.cjs after every local redeploy) and warns loudly when the
+ * pool/chain it now points at no longer matches what this matcher resolved at
+ * startup. A matcher that was started against an older deployment silently
+ * watches a stale pool forever otherwise — this surfaces that immediately.
+ */
+interface DiskLocalConfig {
+  poolAddress?: string;
+  chainId?: number | string;
+}
+let staleConfigWarned = false;
+function checkLocalConfigFresh(): void {
+  if (CHAIN_ID !== 31337 || staleConfigWarned) return;
+  let disk: DiskLocalConfig | null = null;
+  try {
+    disk = JSON.parse(fs.readFileSync(LOCAL_ADDRESSES_PATH, "utf8")) as DiskLocalConfig;
+  } catch {
+    return; // file unreadable — not our problem here
+  }
+  if (typeof disk?.poolAddress !== "string") return;
+  const diskPool = disk.poolAddress.toLowerCase();
+  const diskChain = Number(disk.chainId);
+  if (diskPool !== POOL_ADDRESS.toLowerCase()) {
+    console.error(
+      `[${stamp()}] CONFIG DRIFT DETECTED: frontend/public/local-addresses.json now points at pool ` +
+        `${disk.poolAddress} (chainId ${diskChain}), but this matcher is still watching ${POOL_ADDRESS}. ` +
+        "A redeploy happened while I was running — restart this matcher so it settles the current deployment."
+    );
+    staleConfigWarned = true;
+  } else if (diskChain && diskChain !== CHAIN_ID) {
+    console.error(
+      `[${stamp()}] CONFIG DRIFT DETECTED: local-addresses.json chainId is ${diskChain}, ` +
+        `but this matcher resolved chainId ${CHAIN_ID}. Restart me with the matching CHAIN_ID.`
+    );
+    staleConfigWarned = true;
+  }
+}
 
 /**
  * Registered supported assets for the active network: token address ->
  * { symbol, Chainlink feed } (built from config/networks.ts).
  */
 const TOKENS: Record<string, { symbol: string; feed: string }> = {};
-for (const token of network.SUPPORTED_TOKENS) {
+for (const token of network!.SUPPORTED_TOKENS) {
   TOKENS[token.tokenAddress.toLowerCase()] = { symbol: token.symbol, feed: token.chainlinkOracleAddress };
 }
 
@@ -132,8 +212,7 @@ function findMatchablePair(orders: Order[], prices: Record<string, bigint>): { a
       const valueB = (orderB.amountIn * priceB) / 10n ** 18n;
       const diff = valueA > valueB ? valueA - valueB : valueB - valueA;
       const avg = (valueA + valueB) / 2n;
-      const tolerance = avg * (MATCH_TOLERANCE_BPS * 10n ** 16n);
-      if (diff * 10n ** 18n <= tolerance) return { a: orderA.id, b: orderB.id };
+      if (diff * 10n ** 18n <= avg * MATCH_TOLERANCE) return { a: orderA.id, b: orderB.id };
     }
   }
   return null;
@@ -174,6 +253,8 @@ async function executePair(
  * Never throws: errors are logged so the loop keeps ticking.
  */
 async function tick(pool: ethers.Contract, provider: ethers.JsonRpcProvider, caller: string): Promise<void> {
+  checkLocalConfigFresh();
+
   let orders: Order[];
   try {
     orders = await fetchActiveOrders(pool);
@@ -191,7 +272,8 @@ async function tick(pool: ethers.Contract, provider: ethers.JsonRpcProvider, cal
   }
 
   const eth = prices[ZERO_ADDRESS.toLowerCase()];
-  console.log(`[${stamp()}] ETH/USD ${eth ? ethers.formatUnits(eth, 18) : "n/a"} · ${orders.length} open orders`);
+  const block = await provider.getBlockNumber().catch(() => -1);
+  console.log(`[${stamp()}] tick · block ${block} · ETH/USD ${eth ? ethers.formatUnits(eth, 18) : "n/a"} · ${orders.length} open orders`);
 
   const pair = findMatchablePair(orders, prices);
   if (!pair) {
@@ -218,9 +300,13 @@ async function main() {
   const wallet = new ethers.Wallet(key, provider);
   const pool = new ethers.Contract(POOL_ADDRESS, POOL_ABI, wallet);
 
-  console.log(`[${stamp()}] matcher starting · network ${network!.name} (chainId ${CHAIN_ID}) · pool ${POOL_ADDRESS} · wallet ${wallet.address}`);
+  const startBlock = await provider.getBlockNumber();
+  console.log(`[${stamp()}] matcher starting · network ${network!.name} (chainId ${CHAIN_ID}) · pool ${POOL_ADDRESS} · block ${startBlock} · wallet ${wallet.address}`);
   console.log(`[${stamp()}] balance ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH`);
-  console.log(`[${stamp()}] interval ${TICK_INTERVAL_MS / 1000}s`);
+  console.log(`[${stamp()}] interval ${TICK_INTERVAL_MS / 1000}s · watching ${Object.keys(TOKENS).length} tokens via ${Object.values(TOKENS)[0]?.feed ?? "?"}`);
+  if (CHAIN_ID === 31337) {
+    console.log(`[${stamp()}] local overlay: frontend/public/local-addresses.json -> pool ${localAddresses.poolAddress}`);
+  }
 
   const registry = await pool.automationRegistry();
   console.log(`[${stamp()}] automationRegistry ${registry}`);

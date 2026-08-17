@@ -13,25 +13,34 @@ export default function ConnectWallet({ onAccountChange, onNetworkChange, target
   const providerRef = useRef(null);
   const handlersRef = useRef([]);
 
-  const readAccount = useCallback(async () => {
-    const provider = providerRef.current;
-    if (!provider) return;
-    try {
-      const signer = await provider.getSigner();
-      const address = await signer.getAddress();
-      const network = await provider.getNetwork();
-      const bal = await provider.getBalance(address);
-      const nextChainId = Number(network.chainId);
-      setAccount(address);
-      setChainId(nextChainId);
-      setBalance(formatEther(bal));
-      setError(null);
-      onNetworkChange?.(nextChainId);
-    } catch (err) {
-      console.error("readAccount failed:", err);
-      setError(err?.message ?? String(err));
-    }
-  }, [onNetworkChange]);
+  // Reads account/network/balance from the wallet.
+  // `reportChain`: when true, bumps the app's selected network to whatever the
+  // wallet reports (used only for live `accountsChanged`/`chainChanged` events
+  // that originate inside MetaMask). The initial connect DOES NOT reportChain:
+  // the app's own dropdown selection is authoritative for chain reads, so a
+  // fresh connect can't yank the app back onto a different RPC.
+  const readAccount = useCallback(
+    async (reportChain) => {
+      const provider = providerRef.current;
+      if (!provider) return;
+      try {
+        const signer = await provider.getSigner();
+        const address = await signer.getAddress();
+        const network = await provider.getNetwork();
+        const bal = await provider.getBalance(address);
+        const nextChainId = Number(network.chainId);
+        setAccount(address);
+        setChainId(nextChainId);
+        setBalance(formatEther(bal));
+        setError(null);
+        if (reportChain) onNetworkChange?.(nextChainId);
+      } catch (err) {
+        console.error("readAccount failed:", err);
+        setError(err?.message ?? String(err));
+      }
+    },
+    [onNetworkChange]
+  );
 
   const handleConnect = useCallback(async () => {
     setBusy(true);
@@ -42,10 +51,11 @@ export default function ConnectWallet({ onAccountChange, onNetworkChange, target
 
       await provider.send("eth_requestAccounts", []);
       if (targetChainId) await ensureNetwork(targetChainId);
-      await readAccount();
+      // targetChainId is the app's selected chain; keep the app on it.
+      await readAccount(false);
 
-      const onAccountsChanged = () => readAccount();
-      const onChainChanged = () => readAccount();
+      const onAccountsChanged = () => readAccount(true);
+      const onChainChanged = () => readAccount(true);
       handlersRef.current = [onAccountsChanged, onChainChanged];
       window.ethereum.on("accountsChanged", onAccountsChanged);
       window.ethereum.on("chainChanged", onChainChanged);

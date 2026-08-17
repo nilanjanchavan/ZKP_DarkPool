@@ -1,10 +1,19 @@
-# project.yaml
+# project.yaml — CRE global config (repo root = project root).
+# The CLI resolves this file when run from the repo root; workflows live in
+# workflows/<name>/.
+
 staging-settings:
+  account:
+    workflow-owner-address: "0x33F2044CaC5c097D890B9771CAD52213e08F710b" # CRE_ETH_PRIVATE_KEY wallet
   rpcs:
     - chain-name: "ethereum-testnet-sepolia"
       url: "https://ethereum-sepolia-rpc.publicnode.com"
 
 production-settings:
+  account:
+    workflow-owner-address: "0x33F2044CaC5c097D890B9771CAD52213e08F710b" # CRE_ETH_PRIVATE_KEY wallet
   rpcs:
+    - chain-name: "ethereum-testnet-sepolia"
+      url: "https://ethereum-sepolia-rpc.publicnode.com"
     - chain-name: "ethereum-mainnet"
       url: "${MAINNET_RPC_URL}"

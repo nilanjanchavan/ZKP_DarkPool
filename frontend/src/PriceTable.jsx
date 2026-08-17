@@ -64,17 +64,19 @@ export default function PriceTable({ network }) {
     setProviderError(null);
   }, [network]);
 
+  // Stable across renders. loadPrices must NOT depend on `prices` (it sets it):
+  // a self-referential dep makes the interval effect re-arm on every update and
+  // immediately refetch — the source of the previous ~200-400ms request loop.
   const loadPrices = useCallback(async () => {
     try {
       const next = await Promise.all(
         feeds.map(async (feed) => {
-          const row = prices.find((p) => p.symbol === feed.symbol);
           const base = {
             symbol: feed.symbol,
             label: feed.label,
-            price: row?.price ?? null,
-            decimals: row?.decimals ?? null,
-            updatedAt: row?.updatedAt ?? null,
+            price: null,
+            decimals: null,
+            updatedAt: null,
             loading: true,
             error: null,
           };
@@ -92,7 +94,7 @@ export default function PriceTable({ network }) {
     } catch (err) {
       setProviderError(err?.message ?? String(err));
     }
-  }, [provider, feeds, prices]);
+  }, [provider, feeds]);
 
   useEffect(() => {
     loadPrices();

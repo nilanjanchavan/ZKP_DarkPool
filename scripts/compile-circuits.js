@@ -1,60 +1,56 @@
-const { execFileSync } = require("child_process");
-const { mkdirSync, existsSync } = require("fs");
+/**
+ * Builds the DarkPool ZK circuit end-to-end inside WSL Ubuntu.
+ *
+ * Native-Windows circom is intentionally avoided: circom's circomlib include
+ * resolution is unreliable on Windows path separators. This wrapper shells out
+ * to the WSL pipeline (scripts/circuit-pipeline.sh) which runs the real
+ * Rust-built circom binary, performs the trusted setup against the public
+ * powers-of-tau ceremony file, and copies every artifact back into
+ * build/circuits/ and contracts/.
+ */
+const { spawnSync } = require("child_process");
 const path = require("path");
+const { existsSync, mkdirSync } = require("fs");
 
 const ROOT = path.resolve(__dirname, "..");
-const CIRCUIT = path.join(ROOT, "circuits", "kyc_verifier.circom");
-const OUT = path.join(ROOT, "build", "circuits");
-const PT_DIR = path.join(ROOT, "build", "ptau");
+const DISTRO = process.env.CIRCOM_WSL_DISTRO || "Ubuntu";
 
-const R1CS = path.join(OUT, "kyc_verifier.r1cs");
-const WASM = path.join(OUT, "kyc_verifier_js", "kyc_verifier.wasm");
-const VKEY_JSON = path.join(OUT, "verification_key.json");
-const SOLIDITY_VERIFIER = path.join(ROOT, "contracts", "Verifier.sol");
-
-// Powers-of-tau. The Poseidon(2) kyc_verifier only needs 2^8; hardcode the
-// standard file so the ptau download is deterministic and reproducible.
-const PTAU = path.join(PT_DIR, "powersOfTau28_hez_final_08.ptau");
-const ZKEY_INIT = path.join(OUT, "kyc_verifier_0.zkey");
-const ZKEY_FINAL = path.join(OUT, "kyc_verifier_final.zkey");
-
-const run = (cmd, args) => {
-  console.log(`\n> ${cmd} ${args.join(" ")}`);
-  execFileSync(cmd, args, { stdio: "inherit", cwd: ROOT });
-};
-
-const has = (p) => existsSync(p);
-
-mkdirSync(OUT, { recursive: true });
-mkdirSync(PT_DIR, { recursive: true });
-
-console.log("=== 1/6 Compiling Circom circuit ===");
-run("circom", [CIRCUIT, "--r1cs", "--wasm", "--sym", "-o", OUT]);
-
-console.log("\n=== 2/6 Ensuring Powers of Tau is available ===");
-if (!has(PTAU)) {
-  console.error("Missing powers of tau file. Download it once:");
-  console.error("  curl -o build/ptau/powersOfTau28_hez_final_08.ptau https://hermez.s3-eu-west-1.amazonaws.com/powersOfTau28_hez_final_08.ptau");
-  process.exit(1);
+// Circle back: the Windows-side circom.exe is the broken native binary from
+// the previous attempt — fail loudly instead of silently picking it up.
+const WINDOWS_CIRCOM = path.join(ROOT, "circom.exe");
+if (existsSync(WINDOWS_CIRCOM)) {
+  console.warn(
+    `[!] ${WINDOWS_CIRCOM} is the native-Windows binary from the earlier (broken) ` +
+      "approach. It is ignored; the pipeline uses the WSL circom binary instead."
+  );
 }
 
-console.log("\n=== 3/6 Groth16 setup ===");
-run("npx", ["snarkjs", "groth16", "setup", R1CS, PTAU, ZKEY_INIT]);
+const pipePath = path.join(ROOT, "scripts", "circuit-pipeline.sh");
+mkdirSync(path.join(ROOT, "build", "circuits"), { recursive: true });
 
-console.log("\n=== 4/6 Contributing randomness (ceremony emulation) ===");
-run("npx", ["snarkjs", "zkey", "contribute", ZKEY_INIT, ZKEY_FINAL, "--name=ZK-DarkPool", "-e", "zkdarkpool-sepolia-entropy"]);
-run("npx", ["snarkjs", "zkey", "verify", R1CS, PTAU, ZKEY_FINAL]);
+console.log(`\n> wsl -d ${DISTRO} -- bash ${pipePath}\n`);
+const result = spawnSync("wsl", ["-d", DISTRO, "--", "bash", pipePath], {
+  stdio: "inherit",
+  cwd: ROOT,
+  encoding: "utf8",
+});
 
-if (!has(VKEY_JSON)) {
-  console.log("\n=== 5/6 Exporting verification key ===");
-  run("npx", ["snarkjs", "zkey", "export", "verificationkey", ZKEY_FINAL, VKEY_JSON]);
+if (result.status !== 0) {
+  console.error(
+    "\n==================================================================\n" +
+      "Pipeline failed inside WSL.\n" +
+      "  - Is WSL Ubuntu available? (run: wsl --status)\n" +
+      "  - Is circom installed?      (run inside WSL: circom --version)\n" +
+      "  - Is snarkjs installed?     (run inside WSL: snarkjs --version)\n" +
+      "==================================================================\n"
+  );
+  process.exit(result.status ?? 1);
 }
 
-console.log("\n=== 6/6 Exporting Solidity Groth16 verifier ===");
-run("npx", ["snarkjs", "zkey", "export", "solidityverifier", ZKEY_FINAL, SOLIDITY_VERIFIER]);
-
-console.log("\n✅ Done.");
-console.log(`R1CS:            ${R1CS}`);
-console.log(`WASM:            ${WASM}`);
-console.log(`VerificationKey: ${VKEY_JSON}`);
-console.log(`Solidity:        ${SOLIDITY_VERIFIER}`);
+console.log("✅ ZK circuit artifacts are up to date:");
+console.log("  - build/circuits/darkpool_spend.r1cs");
+console.log("  - build/circuits/darkpool_spend_js/darkpool_spend.wasm");
+console.log("  - build/circuits/darkpool_spend_final.zkey");
+console.log("  - build/circuits/verification_key.json");
+console.log("  - contracts/Verifier.sol");
+console.log("  - frontend/public/circuits/ (wasm + zkey served by Vite)");

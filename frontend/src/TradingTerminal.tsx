@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Contract, JsonRpcProvider, formatUnits, keccak256, MaxUint256, parseUnits, solidityPacked } from "ethers";
+import { AbiCoder, Contract, JsonRpcProvider, formatUnits, hexlify, MaxUint256, parseUnits, randomBytes } from "ethers";
+// @ts-ignore — snarkjs ships without bundled type declarations (Vite/esbuild
+// transpiles without type-checking; this comment keeps editors quiet).
+import * as snarkjs from "snarkjs";
+import { buildPoseidon } from "circomlibjs";
 import { ERC20_ABI, ZK_POOL_ABI, ZERO_ADDRESS, isNativeToken } from "./config";
 import { fetchTokenPrice, oracleFor } from "./prices";
 import type { NetworkConfig, NetworkToken } from "../../config/networks";
@@ -203,22 +207,68 @@ export default function TradingTerminal({ account, network }: TradingTerminalPro
       return;
     }
 
-    // Unique per submission so the on-chain nullifier registry never rejects it.
-    const nullifier = keccak256(solidityPacked(["address", "uint256"], [account, Date.now()]));
+    // Per-order secret: genuinely random (crypto-backed), secret to the user.
+    // The nullifier is derived from it via Poseidon, so the on-chain record
+    // cannot be linked back to (address, timestamp) arithmetic — anyone can
+    // reproduce the old keccak(address, ts) nullifier, this one only the
+    // secret holder can. (A production system would also persist the secret /
+    // nullifier or derive it from wallet-owned randomness.)
+    const secretDecimal = BigInt(hexlify(randomBytes(32))).toString();
+    const amountField = amountParsed.toString();
+    const tokenInField = BigInt(tokenIn.tokenAddress).toString();
+    const tokenOutField = BigInt(tokenOut.tokenAddress).toString();
+    const senderField = BigInt(account).toString();
 
     try {
       setStatus("awaitingWallet");
+
+      // Phase-1 heavy work: run the witness + Groth16 proving in the browser.
+      // The .wasm and .zkey live under /public/circuits (served by Vite).
+      const poseidon = await buildPoseidon();
+      const nullifier = poseidon.F.toObject(
+        poseidon([secretDecimal, amountField, tokenInField, tokenOutField, senderField])
+      ).toString();
+
+      const { proof, publicSignals } = await snarkjs.groth16.fullProve(
+        {
+          nullifierSecret: secretDecimal,
+          nullifier,
+          amountIn: amountField,
+          tokenIn: tokenInField,
+          tokenOut: tokenOutField,
+          sender: senderField,
+        },
+        `${window.location.origin}/circuits/darkpool_spend_js/darkpool_spend.wasm`,
+        `${window.location.origin}/circuits/darkpool_spend_final.zkey`
+      );
+
+      // ABI-encode the Groth16 proof as (uint[2], uint[2][2], uint[2]) in the
+      // canonical snarkjs ordering (mirrors `zkey export soliditycalldata`):
+      // A/C as (x, y); B index-swapped to [[b0[1], b0[0]],[b1[1], b1[0]]]
+      // (the pairing precompile's G2 convention). slice(0,2) drops the
+      // phantom trailing "1" this snarkjs version appends to pi_a/pi_c/pi_b.
+      const proofBytes = AbiCoder.defaultAbiCoder().encode(
+        ["uint256[2]", "uint256[2][2]", "uint256[2]"],
+        [
+          proof.pi_a.slice(0, 2).map(String),
+          [
+            [proof.pi_b[0][1], proof.pi_b[0][0]],
+            [proof.pi_b[1][1], proof.pi_b[1][0]],
+          ].map((row) => row.map(String)),
+          proof.pi_c.slice(0, 2).map(String),
+        ]
+      );
+
       const provider = createBrowserProvider();
       const signer = await provider.getSigner();
       const pool = new Contract(network.POOL_ADDRESS, ZK_POOL_ABI, signer);
 
-      // MockZKVerifier accepts any proof (public-input count == 4); swap in a
-      // real Groth16 proof here once the real Verifier is wired to the pool.
-      const proof = "0x";
-
+      // publicSignals[0] is the nullifier the circuit committed to. Passing it
+      // exactly (not our locally computed copy) guarantees the on-chain
+      // publicInputs[0] matches the proof.
       const tx = await pool.submitOrder(
-        proof,
-        nullifier,
+        proofBytes,
+        publicSignals[0],
         tokenIn.tokenAddress,
         tokenOut.tokenAddress,
         amountParsed,

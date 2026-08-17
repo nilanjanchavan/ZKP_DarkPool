@@ -130,7 +130,9 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
     /**
      * @notice Lists an order selling `amountIn` of `tokenIn` for `tokenOut`.
      * @dev Deposits the sold asset: native ETH via msg.value, ERC-20s via
-     *      transferFrom. `publicInputs` are [nullifier, amountIn, tokenIn, tokenOut].
+     *      transferFrom. `publicInputs` are [nullifier, amountIn, tokenIn,
+     *      tokenOut, msg.sender] — the last element binds the proof to the
+     *      caller so a captured proof cannot be replayed by another address.
      */
     function submitOrder(
         bytes calldata proof,
@@ -142,11 +144,12 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
         if (amountIn == 0) revert ZeroAmount();
         if (tokenIn == tokenOut) revert SameToken();
 
-        uint256[] memory publicInputs = new uint256[](4);
+        uint256[] memory publicInputs = new uint256[](5);
         publicInputs[0] = nullifier;
         publicInputs[1] = amountIn;
         publicInputs[2] = uint256(uint160(tokenIn));
         publicInputs[3] = uint256(uint160(tokenOut));
+        publicInputs[4] = uint256(uint160(msg.sender));
         if (!zkVerifier.verifyProof(proof, publicInputs)) revert InvalidProof();
         require(!nullifiersUsed[nullifier], "Nullifier already used");
         nullifiersUsed[nullifier] = true;

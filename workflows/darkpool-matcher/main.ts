@@ -15,11 +15,12 @@ import {
   type Address,
   decodeFunctionResult,
   encodeFunctionData,
+  type Hex,
   zeroAddress,
 } from "viem";
 import { z } from "zod";
 
-import { AggregatorV3InterfaceAbi, ZKDarkPoolAbi } from "../contracts/abi/ZKDarkPool";
+import { AggregatorV3InterfaceAbi, ZKDarkPoolAbi } from "./contracts/abi/ZKDarkPool";
 
 const configSchema = z.object({
   schedule: z.string(),
@@ -80,7 +81,7 @@ function readEthUsdPrice(runtime: Runtime<Config>): bigint {
   return price18;
 }
 
-function queryCheckUpkeep(runtime: Runtime<Config>): { upkeepNeeded: boolean; performData: Uint8Array } {
+function queryCheckUpkeep(runtime: Runtime<Config>): { upkeepNeeded: boolean; performData: Hex } {
   const evmClient = getEvmClient(runtime);
 
   const callData = encodeFunctionData({
@@ -104,19 +105,19 @@ function queryCheckUpkeep(runtime: Runtime<Config>): { upkeepNeeded: boolean; pe
     abi: ZKDarkPoolAbi,
     functionName: "checkUpkeep",
     data: bytesToHex(contractCall.data),
-  }) as [boolean, Uint8Array];
+  }) as [boolean, Hex];
 
-  runtime.log(`checkUpkeep => upkeepNeeded=${upkeepNeeded}, performData=${bytesToHex(performData)}`);
+  runtime.log(`checkUpkeep => upkeepNeeded=${upkeepNeeded}, performData=${performData}`);
   return { upkeepNeeded, performData };
 }
 
-function submitPerformUpkeep(runtime: Runtime<Config>, performData: Uint8Array): string {
+function submitPerformUpkeep(runtime: Runtime<Config>, performData: Hex): string {
   const evmClient = getEvmClient(runtime);
 
   const callData = encodeFunctionData({
     abi: ZKDarkPoolAbi,
     functionName: "performUpkeep",
-    args: [bytesToHex(performData)],
+    args: [performData],
   });
 
   const reportResponse = runtime

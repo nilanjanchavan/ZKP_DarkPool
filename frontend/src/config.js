@@ -25,6 +25,49 @@ export function safeAddress(value) {
 
 export const NATIVE_ADDRESS = ZERO_ADDRESS;
 
+// Merges the JSON written by scripts/deploy.cjs (chainId 31337, Hardhat
+// localhost) onto the 31337 skeleton NetworkConfig. JSON values win at every
+// level — top-level fields AND the nested SUPPORTED_TOKENS entries — so a
+// deployed pool/mock feeds/mock LINK take effect without baking addresses into
+// config/networks.ts. Tokens missing from the JSON keep their skeleton row but
+// degrade to ZERO_ADDRESS, surfaced via console.warn (a zero oracle is exactly
+// what produces "could not decode result data (value=0x)" against a non-feed).
+export function buildLocalNetworkFromJson(data, baseNetwork) {
+  const baseTokens = baseNetwork?.SUPPORTED_TOKENS ?? [];
+  const jsonTokens = Array.isArray(data.tokens) ? data.tokens : [];
+
+  let tokens = jsonTokens.map((t) => ({
+    symbol: t.symbol,
+    tokenAddress: safeAddress(t.address) ?? ZERO_ADDRESS,
+    decimals: Number(t.decimals ?? 18),
+    chainlinkOracleAddress: safeAddress(t.oracle) ?? ZERO_ADDRESS,
+  }));
+  if (tokens.length === 0) {
+    // Nothing usable in the JSON — keep the skeleton rows so the network is at
+    // least structurally valid, and say why.
+    tokens = baseTokens;
+    console.warn("[local] local-addresses.json has no tokens — keeping skeleton rows.");
+  }
+  for (const t of tokens) {
+    if (t.chainlinkOracleAddress === ZERO_ADDRESS) {
+      console.warn(
+        `[local] token "${t.symbol}" resolved with ZERO oracle address; ` +
+          "latestRoundData() will be called on the zero address. Run scripts/deploy.cjs to write real mock feed addresses."
+      );
+    }
+  }
+
+  return {
+    chainId: Number(data.chainId ?? baseNetwork?.chainId ?? 31337),
+    name: data.name ?? baseNetwork?.name ?? "Hardhat Local",
+    POOL_ADDRESS: safeAddress(data.poolAddress) ?? baseNetwork?.POOL_ADDRESS ?? ZERO_ADDRESS,
+    RPC_URL: data.rpcUrl ?? baseNetwork?.RPC_URL ?? "http://127.0.0.1:8545",
+    EXPLORER_URL: data.explorerUrl ?? baseNetwork?.EXPLORER_URL ?? "http://127.0.0.1:8545",
+    POOL_FROM_BLOCK: Number(data.poolFromBlock ?? baseNetwork?.POOL_FROM_BLOCK ?? 0),
+    SUPPORTED_TOKENS: tokens,
+  };
+}
+
 export const ZK_POOL_ABI = [
   "function getLatestPrice() external view returns (uint256)",
   "function getTokenPrice(address token) external view returns (uint256)",

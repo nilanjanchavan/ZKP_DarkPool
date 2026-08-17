@@ -11,8 +11,10 @@
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@types/bun": "^1.3.14",
     "circom": "0.5.46",
     "circomlib": "^2.0.5",
+    "circomlibjs": "^0.1.7",
     "hardhat": "^2.29.0",
     "snarkjs": "^0.7.4"
   },
