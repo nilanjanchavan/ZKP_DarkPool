@@ -223,7 +223,10 @@ export default function TradingTerminal({ account, network }: TradingTerminalPro
       setStatus("awaitingWallet");
 
       // Phase-1 heavy work: run the witness + Groth16 proving in the browser.
-      // The .wasm and .zkey live under /public/circuits (served by Vite).
+      // The .wasm and .zkey live at the public/ root (served by Vite). Absolute
+      // "/" paths resolve from the deployment root on Vercel; keep them there so
+      // the files stay git-tracked (public/circuits/ was gitignored and never
+      // made it into the Vercel build, causing the HTML-magic-word error).
       const poseidon = await buildPoseidon();
       const nullifier = poseidon.F.toObject(
         poseidon([secretDecimal, amountField, tokenInField, tokenOutField, senderField])
@@ -238,8 +241,8 @@ export default function TradingTerminal({ account, network }: TradingTerminalPro
           tokenOut: tokenOutField,
           sender: senderField,
         },
-        `${window.location.origin}/circuits/darkpool_spend_js/darkpool_spend.wasm`,
-        `${window.location.origin}/circuits/darkpool_spend_final.zkey`
+        "/darkpool_spend.wasm",
+        "/darkpool_spend_final.zkey"
       );
 
       // ABI-encode the Groth16 proof as (uint[2], uint[2][2], uint[2]) in the
