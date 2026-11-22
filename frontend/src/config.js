@@ -31,6 +31,7 @@ export const ZK_POOL_ABI = [
   "function checkUpkeep(bytes calldata checkData) external view returns (bool upkeepNeeded, bytes memory performData)",
   "function performUpkeep(bytes calldata performData) external",
   "function submitOrder(bytes proof, uint256 nullifier, address tokenIn, address tokenOut, uint256 amountIn) payable returns (uint256)",
+  "function cancelOrder(uint256 orderId) external",
   "function orders(uint256) external view returns (uint256 id, address trader, address tokenIn, address tokenOut, uint256 amountIn, bool active)",
   "function ordersCount() external view returns (uint256)",
   "function automationRegistry() external view returns (address)",
@@ -38,6 +39,7 @@ export const ZK_POOL_ABI = [
   "event OrderSubmitted(uint256 indexed orderId, address indexed trader, uint256 nullifier, address tokenIn, address tokenOut, uint256 amountIn)",
   "event OrderExecuted(uint256 indexed orderId, address indexed trader, uint256 amountIn, uint256 fillPriceUSD)",
   "event OrderMatched(uint256 indexed orderAId, uint256 indexed orderBId, uint256 priceA, uint256 priceB)",
+  "event OrderCancelled(uint256 indexed orderId, address indexed trader, address tokenIn, uint256 amountIn)",
 ];
 
 export const ERC20_ABI = [

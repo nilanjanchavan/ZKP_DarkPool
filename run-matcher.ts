@@ -18,9 +18,13 @@ const MATCH_TOLERANCE_BPS = 100n; // 1%, mirrors the pool's MATCH_TOLERANCE cons
  * Registered supported assets for the active network: token address ->
  * { symbol, Chainlink feed } (built from config/networks.ts).
  */
-const TOKENS: Record<string, { symbol: string; feed: string }> = {};
+const TOKENS: Record<string, { symbol: string; feed: string; decimals: number }> = {};
 for (const token of network.SUPPORTED_TOKENS) {
-  TOKENS[token.tokenAddress.toLowerCase()] = { symbol: token.symbol, feed: token.chainlinkOracleAddress };
+  TOKENS[token.tokenAddress.toLowerCase()] = {
+    symbol: token.symbol,
+    feed: token.chainlinkOracleAddress,
+    decimals: token.decimals ?? 18,
+  };
 }
 
 const POOL_ABI = [
@@ -128,8 +132,18 @@ function findMatchablePair(orders: Order[], prices: Record<string, bigint>): { a
       const priceB = prices[orderB.tokenIn];
       if (priceA === undefined || priceB === undefined) continue;
 
-      const valueA = (orderA.amountIn * priceA) / 10n ** 18n;
-      const valueB = (orderB.amountIn * priceB) / 10n ** 18n;
+      const decA = TOKENS[orderA.tokenIn]?.decimals ?? 18;
+      const decB = TOKENS[orderB.tokenIn]?.decimals ?? 18;
+
+      const normA = decA <= 18
+        ? orderA.amountIn * 10n ** BigInt(18 - decA)
+        : orderA.amountIn / 10n ** BigInt(decA - 18);
+      const normB = decB <= 18
+        ? orderB.amountIn * 10n ** BigInt(18 - decB)
+        : orderB.amountIn / 10n ** BigInt(decB - 18);
+
+      const valueA = (normA * priceA) / 10n ** 18n;
+      const valueB = (normB * priceB) / 10n ** 18n;
       const diff = valueA > valueB ? valueA - valueB : valueB - valueA;
       const avg = (valueA + valueB) / 2n;
       const tolerance = avg * (MATCH_TOLERANCE_BPS * 10n ** 16n);

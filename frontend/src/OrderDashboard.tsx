@@ -3,6 +3,7 @@ import { Contract, JsonRpcProvider, formatUnits } from "ethers";
 import { ZK_POOL_ABI } from "./config";
 import { fetchTokenPrice } from "./prices";
 import type { NetworkConfig, NetworkToken } from "../../config/networks";
+import { createBrowserProvider } from "./providers";
 
 const REFRESH_INTERVAL_MS = 15000;
 
@@ -244,21 +245,43 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
     }
   }, [account, pool, network, provider, tokens]);
 
-  // Live updates: react to OrderSubmitted/OrderExecuted (fired by run-matcher.ts
-  // calling performUpkeep) plus a polling fallback so nothing goes stale. Only
-  // chain-confirmed orders can surface — this dashboard reads on-chain state and
-  // never optimistically adds an order.
+  const [cancellingId, setCancellingId] = useState<bigint | null>(null);
+
+  const handleCancel = async (orderId: bigint) => {
+    if (!account) return;
+    try {
+      setCancellingId(orderId);
+      setError(null);
+      const browserProvider = createBrowserProvider();
+      const signer = await browserProvider.getSigner();
+      const poolWithSigner = new Contract(network.POOL_ADDRESS, ZK_POOL_ABI, signer);
+      const tx = await poolWithSigner.cancelOrder(orderId);
+      await tx.wait();
+      await refresh();
+    } catch (err: any) {
+      console.error("OrderDashboard: cancel failed:", err);
+      const msg = err?.info?.error?.message ?? err?.message ?? String(err);
+      setError(err?.code === "ACTION_REJECTED" ? "Cancellation rejected in wallet." : msg);
+    } finally {
+      setCancellingId(null);
+    }
+  };
+
+  // Live updates: react to OrderSubmitted/OrderExecuted/OrderCancelled
   useEffect(() => {
     if (!account) return;
     refresh();
     const onSubmitted = () => refresh();
     const onExecuted = () => refresh();
+    const onCancelled = () => refresh();
     pool.on(pool.filters.OrderSubmitted(null, account), onSubmitted);
     pool.on(pool.filters.OrderExecuted(null, account), onExecuted);
+    pool.on(pool.filters.OrderCancelled(null, account), onCancelled);
     const interval = setInterval(refresh, REFRESH_INTERVAL_MS);
     return () => {
       pool.off(pool.filters.OrderSubmitted(null, account), onSubmitted);
       pool.off(pool.filters.OrderExecuted(null, account), onExecuted);
+      pool.off(pool.filters.OrderCancelled(null, account), onCancelled);
       clearInterval(interval);
     };
   }, [account, pool, refresh]);
@@ -283,7 +306,14 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
             <span style={styles.panelTitle}>Listed Trades</span>
             <span style={styles.count}>{listed.length}</span>
           </div>
-          <OrderTable rows={listed} loading={loading} emptyText="No open orders" info={tokenInfo} />
+          <OrderTable
+            rows={listed}
+            loading={loading}
+            emptyText="No open orders"
+            info={tokenInfo}
+            onCancel={handleCancel}
+            cancellingId={cancellingId}
+          />
         </div>
 
         <div style={styles.panel}>
@@ -303,11 +333,15 @@ function OrderTable({
   loading,
   emptyText,
   info,
+  onCancel,
+  cancellingId,
 }: {
   rows: OrderRow[];
   loading: boolean;
   emptyText: string;
   info: TokenInfo;
+  onCancel?: (id: bigint) => void;
+  cancellingId?: bigint | null;
 }) {
   return (
     <table style={styles.table}>
@@ -348,6 +382,15 @@ function OrderTable({
                 <span style={{ ...styles.status, ...(row.active ? styles.statusOpen : styles.statusExecuted) }}>
                   {row.active ? "Open" : "Executed"}
                 </span>
+                {row.active && onCancel && (
+                  <button
+                    onClick={() => onCancel(row.id)}
+                    disabled={cancellingId === row.id}
+                    style={styles.cancelButton}
+                  >
+                    {cancellingId === row.id ? "…" : "Cancel"}
+                  </button>
+                )}
               </td>
             </tr>
           ))
@@ -417,4 +460,15 @@ const styles = {
   },
   statusOpen: { background: "#f59e0b", color: "#1a1206" },
   statusExecuted: { background: "#1f2937", color: "#9ca3af" },
+  cancelButton: {
+    background: "#2a1515",
+    color: "#ff6b6b",
+    border: "1px solid #5a2525",
+    borderRadius: 0,
+    padding: "2px 8px",
+    fontSize: "0.72rem",
+    fontWeight: 600,
+    cursor: "pointer",
+    marginLeft: 8,
+  },
 };

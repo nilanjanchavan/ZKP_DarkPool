@@ -5,6 +5,8 @@ import "@openzeppelin/contracts/utils/Pausable.sol";
 import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import "@chainlink/contracts/src/v0.8/shared/interfaces/AggregatorV3Interface.sol";
 import "@chainlink/contracts/src/v0.8/automation/AutomationCompatible.sol";
 
@@ -21,6 +23,7 @@ interface IZKVerifier {
  *         Chainlink feeds) agree within a small tolerance.
  */
 contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable {
+    using SafeERC20 for IERC20;
     struct Order {
         uint256 id;
         address trader;
@@ -51,6 +54,7 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
     );
     event OrderExecuted(uint256 indexed orderId, address indexed trader, uint256 amountIn, uint256 fillPriceUSD);
     event OrderMatched(uint256 indexed orderAId, uint256 indexed orderBId, uint256 priceA, uint256 priceB);
+    event OrderCancelled(uint256 indexed orderId, address indexed trader, address tokenIn, uint256 amountIn);
     event VerifierUpdated(address indexed verifier);
     event AutomationRegistryUpdated(address indexed registry);
     event PriceFeedUpdated(address indexed token, address indexed feed);
@@ -61,6 +65,8 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
     error SameToken();
     error IncorrectEthValue();
     error UnsupportedToken();
+    error NotOrderTrader();
+    error OrderNotActive();
 
     constructor(
         address _ethUsdFeed,
@@ -148,7 +154,7 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
         if (tokenIn == address(0)) {
             if (msg.value != amountIn) revert IncorrectEthValue();
         } else {
-            require(IERC20(tokenIn).transferFrom(msg.sender, address(this), amountIn), "DepositFailed");
+            IERC20(tokenIn).safeTransferFrom(msg.sender, address(this), amountIn);
         }
 
         orderId = orders.length;
@@ -161,6 +167,21 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
         order.active = true;
 
         emit OrderSubmitted(orderId, msg.sender, nullifier, tokenIn, tokenOut, amountIn);
+    }
+
+    /**
+     * @notice Cancels an active order and refunds the deposited asset to the trader.
+     */
+    function cancelOrder(uint256 orderId) external whenNotPaused nonReentrant {
+        if (orderId >= orders.length) revert OrderNotActive();
+        Order storage order = orders[orderId];
+        if (order.trader != msg.sender) revert NotOrderTrader();
+        if (!order.active) revert OrderNotActive();
+
+        order.active = false;
+        _transferToken(order.tokenIn, msg.sender, order.amountIn);
+
+        emit OrderCancelled(orderId, msg.sender, order.tokenIn, order.amountIn);
     }
 
     function checkUpkeep(bytes calldata checkData)
@@ -218,6 +239,15 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
         emit OrderMatched(orderAId, orderBId, priceA, priceB);
     }
 
+    function _getTokenDecimals(address token) internal view returns (uint8) {
+        if (token == address(0)) return 18;
+        try IERC20Metadata(token).decimals() returns (uint8 dec) {
+            return dec;
+        } catch {
+            return 18;
+        }
+    }
+
     function _isMatchablePair(uint256 orderAId, uint256 orderBId) internal view returns (bool) {
         if (orderAId >= orders.length || orderBId >= orders.length) return false;
         Order storage orderA = orders[orderAId];
@@ -228,8 +258,18 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
         if (orderA.tokenIn != orderB.tokenOut) return false;
         if (orderA.tokenOut != orderB.tokenIn) return false;
 
-        uint256 valueA = (orderA.amountIn * getTokenPrice(orderA.tokenIn)) / 1e18;
-        uint256 valueB = (orderB.amountIn * getTokenPrice(orderB.tokenIn)) / 1e18;
+        uint8 decA = _getTokenDecimals(orderA.tokenIn);
+        uint8 decB = _getTokenDecimals(orderB.tokenIn);
+
+        uint256 normAmountA = decA <= 18
+            ? orderA.amountIn * (10 ** (18 - decA))
+            : orderA.amountIn / (10 ** (decA - 18));
+        uint256 normAmountB = decB <= 18
+            ? orderB.amountIn * (10 ** (18 - decB))
+            : orderB.amountIn / (10 ** (decB - 18));
+
+        uint256 valueA = (normAmountA * getTokenPrice(orderA.tokenIn)) / 1e18;
+        uint256 valueB = (normAmountB * getTokenPrice(orderB.tokenIn)) / 1e18;
         return _withinTolerance(valueA, valueB);
     }
 
@@ -244,7 +284,7 @@ contract ZKDarkPool is AutomationCompatible, ReentrancyGuard, Pausable, Ownable 
             (bool ok, ) = payable(to).call{value: amount}("");
             require(ok, "ETHTransferFailed");
         } else {
-            require(IERC20(token).transfer(to, amount), "ERC20TransferFailed");
+            IERC20(token).safeTransfer(to, amount);
         }
     }
 }
