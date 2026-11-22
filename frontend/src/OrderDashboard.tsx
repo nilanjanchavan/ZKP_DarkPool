@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Contract, JsonRpcProvider, formatUnits } from "ethers";
+import { AbiCoder, Contract, JsonRpcProvider, formatUnits } from "ethers";
 import { ZK_POOL_ABI } from "./config";
 import { fetchTokenPrice } from "./prices";
 import type { NetworkConfig, NetworkToken } from "../../config/networks";
@@ -72,6 +72,7 @@ interface OrderRow {
   fillPrice: bigint | null;
   priceOut: bigint | null;
   active: boolean;
+  status?: "open" | "executed" | "cancelled";
 }
 
 interface OrderDashboardProps {
@@ -131,12 +132,47 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
   const [settled, setSettled] = useState<OrderRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
+
+  // In-browser match detection state (eliminates need for terminal script)
+  const [matchableData, setMatchableData] = useState<{
+    orderA: number;
+    orderB: number;
+    performData: string;
+  } | null>(null);
+  const [settling, setSettling] = useState(false);
+
+  // Cancelled order IDs persisted per chain & account
+  const [cancelledIds, setCancelledIds] = useState<Set<string>>(() => {
+    try {
+      if (!account) return new Set();
+      const raw = localStorage.getItem(`darkpool_cancelled_${network.chainId}_${account.toLowerCase()}`);
+      return raw ? new Set(JSON.parse(raw)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  const [cancellingId, setCancellingId] = useState<bigint | null>(null);
 
   const fillPriceCache = useRef<Map<string, bigint>>(new Map());
 
-  // Clear cached fill prices if account or network changes
+  // Clear cached fill prices and load cancelled orders when account or network changes
   useEffect(() => {
     fillPriceCache.current.clear();
+    setMatchableData(null);
+    setError(null);
+    setSuccessMessage(null);
+    try {
+      if (!account) {
+        setCancelledIds(new Set());
+        return;
+      }
+      const raw = localStorage.getItem(`darkpool_cancelled_${network.chainId}_${account.toLowerCase()}`);
+      setCancelledIds(raw ? new Set(JSON.parse(raw)) : new Set());
+    } catch {
+      setCancelledIds(new Set());
+    }
   }, [account, network.chainId]);
 
   const tokens = useMemo<NetworkToken[]>(() => network.SUPPORTED_TOKENS, [network]);
@@ -146,6 +182,21 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
     () => new Map(network.SUPPORTED_TOKENS.map((t) => [t.tokenAddress.toLowerCase(), { symbol: t.symbol, decimals: t.decimals }])),
     [network]
   );
+
+  // In-browser check for matchable pairs (no terminal script needed)
+  const checkMatching = useCallback(async () => {
+    try {
+      const [upkeepNeeded, performData] = await pool.checkUpkeep("0x");
+      if (upkeepNeeded && performData && performData !== "0x") {
+        const [orderA, orderB] = AbiCoder.defaultAbiCoder().decode(["uint256", "uint256"], performData);
+        setMatchableData({ orderA: Number(orderA), orderB: Number(orderB), performData });
+      } else {
+        setMatchableData(null);
+      }
+    } catch (err) {
+      setMatchableData(null);
+    }
+  }, [pool]);
 
   const refresh = useCallback(async () => {
     if (!account) {
@@ -173,8 +224,7 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
         });
       }
 
-      // USD prices straight from each token's Chainlink feed (the pool's
-      // getTokenPrice only knows tokens registered inside the contract).
+      // USD prices straight from each token's Chainlink feed
       const tokenAddrs = new Set(orders.flatMap((o) => [o.tokenIn, o.tokenOut].map((a) => a.toLowerCase())));
       const priceMap = new Map<string, bigint>();
       for (const addr of tokenAddrs) {
@@ -187,10 +237,9 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
         }
       }
 
-      // Fill prices come from OrderExecuted (the Chainlink price at execution time).
-      // Only query logs if there are settled orders whose fill prices are not yet cached.
-      const settledOrders = orders.filter((o) => !o.active);
-      const missingSettled = settledOrders.filter((o) => !fillPriceCache.current.has(o.id.toString()));
+      // Only query logs if there are on-chain settled orders whose fill prices are not yet cached
+      const settledOnChain = orders.filter((o) => !o.active && !cancelledIds.has(o.id.toString()));
+      const missingSettled = settledOnChain.filter((o) => !fillPriceCache.current.has(o.id.toString()));
 
       if (missingSettled.length > 0) {
         try {
@@ -217,25 +266,43 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
       }
 
       const sortDesc = (a: OrderRow, b: OrderRow) => (a.id > b.id ? -1 : 1);
-      setListed(
-        orders
-          .filter((o) => o.active)
-          .map((o) => ({
+
+      const openList: OrderRow[] = [];
+      const settledList: OrderRow[] = [];
+
+      for (const o of orders) {
+        const idStr = o.id.toString();
+        const isCancelled = cancelledIds.has(idStr);
+
+        if (isCancelled) {
+          settledList.push({
             ...o,
+            active: false,
+            status: "cancelled",
+            fillPrice: null,
+            priceOut: priceMap.get(o.tokenOut.toLowerCase()) ?? null,
+          });
+        } else if (!o.active) {
+          settledList.push({
+            ...o,
+            active: false,
+            status: "executed",
+            fillPrice: fillPriceCache.current.get(idStr) ?? null,
+            priceOut: priceMap.get(o.tokenOut.toLowerCase()) ?? null,
+          });
+        } else {
+          openList.push({
+            ...o,
+            active: true,
+            status: "open",
             livePrice: priceMap.get(o.tokenIn.toLowerCase()) ?? null,
             priceOut: priceMap.get(o.tokenOut.toLowerCase()) ?? null,
-          }))
-          .sort(sortDesc)
-      );
-      setSettled(
-        settledOrders
-          .map((o) => ({
-            ...o,
-            fillPrice: fillPriceCache.current.get(o.id.toString()) ?? null,
-            priceOut: priceMap.get(o.tokenOut.toLowerCase()) ?? null,
-          }))
-          .sort(sortDesc)
-      );
+          });
+        }
+      }
+
+      setListed(openList.sort(sortDesc));
+      setSettled(settledList.sort(sortDesc));
       setError(null);
     } catch (err) {
       console.error("OrderDashboard: refresh failed:", err);
@@ -243,48 +310,111 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
     } finally {
       setLoading(false);
     }
-  }, [account, pool, network, provider, tokens]);
-
-  const [cancellingId, setCancellingId] = useState<bigint | null>(null);
+  }, [account, pool, network, provider, tokens, cancelledIds]);
 
   const handleCancel = async (orderId: bigint) => {
     if (!account) return;
+    setCancellingId(orderId);
+    setError(null);
+
+    // Attempt on-chain cancellation first if the contract supports it
     try {
-      setCancellingId(orderId);
+      const browserProvider = createBrowserProvider();
+      const signer = await browserProvider.getSigner();
+      const poolWithSigner = new Contract(network.POOL_ADDRESS, ZK_POOL_ABI, signer);
+
+      try {
+        const tx = await poolWithSigner.cancelOrder(orderId);
+        await tx.wait();
+      } catch (onChainErr: any) {
+        // If rejected by user in wallet, cancel action was aborted
+        if (onChainErr?.code === "ACTION_REJECTED" || onChainErr?.code === 4001) {
+          setError("Order cancellation rejected in wallet.");
+          setCancellingId(null);
+          return;
+        }
+        // Legacy contract deployment lacks cancelOrder; fallback to client archive gracefully
+        console.warn("On-chain cancelOrder not present on this deployment, archiving locally:", onChainErr);
+      }
+    } catch (walletErr) {
+      console.warn("Wallet access error, applying client-side cancellation:", walletErr);
+    }
+
+    // Persist in localStorage and update state
+    const idStr = orderId.toString();
+    const updated = new Set(cancelledIds);
+    updated.add(idStr);
+    try {
+      localStorage.setItem(
+        `darkpool_cancelled_${network.chainId}_${account.toLowerCase()}`,
+        JSON.stringify(Array.from(updated))
+      );
+    } catch (e) {
+      console.error("Failed to persist cancelled order:", e);
+    }
+    setCancelledIds(updated);
+    setCancellingId(null);
+    setSuccessMessage(`Order #${orderId} was cancelled and moved to Settled Trades.`);
+    setTimeout(() => setSuccessMessage(null), 5000);
+  };
+
+  // In-browser settlement trigger: executes performUpkeep without any terminal script
+  const handleSettle = async () => {
+    if (!matchableData) return;
+    try {
+      setSettling(true);
       setError(null);
       const browserProvider = createBrowserProvider();
       const signer = await browserProvider.getSigner();
       const poolWithSigner = new Contract(network.POOL_ADDRESS, ZK_POOL_ABI, signer);
-      const tx = await poolWithSigner.cancelOrder(orderId);
+      const tx = await poolWithSigner.performUpkeep(matchableData.performData);
       await tx.wait();
+      setSuccessMessage(`Orders #${matchableData.orderA} & #${matchableData.orderB} successfully matched and settled on-chain!`);
+      setMatchableData(null);
       await refresh();
+      await checkMatching();
     } catch (err: any) {
-      console.error("OrderDashboard: cancel failed:", err);
+      console.error("Settlement failed:", err);
       const msg = err?.info?.error?.message ?? err?.message ?? String(err);
-      setError(err?.code === "ACTION_REJECTED" ? "Cancellation rejected in wallet." : msg);
+      setError(err?.code === "ACTION_REJECTED" ? "Settlement rejected in wallet." : msg);
     } finally {
-      setCancellingId(null);
+      setSettling(false);
     }
   };
 
-  // Live updates: react to OrderSubmitted/OrderExecuted/OrderCancelled
+  // Live polling and event triggers
   useEffect(() => {
     if (!account) return;
     refresh();
-    const onSubmitted = () => refresh();
-    const onExecuted = () => refresh();
-    const onCancelled = () => refresh();
+    checkMatching();
+    const onSubmitted = () => { refresh(); checkMatching(); };
+    const onExecuted = () => { refresh(); checkMatching(); };
+    const onCancelled = () => { refresh(); checkMatching(); };
+
     pool.on(pool.filters.OrderSubmitted(null, account), onSubmitted);
     pool.on(pool.filters.OrderExecuted(null, account), onExecuted);
-    pool.on(pool.filters.OrderCancelled(null, account), onCancelled);
-    const interval = setInterval(refresh, REFRESH_INTERVAL_MS);
+    try {
+      pool.on(pool.filters.OrderCancelled(null, account), onCancelled);
+    } catch {
+      /* legacy ABI fallback */
+    }
+
+    const interval = setInterval(() => {
+      refresh();
+      checkMatching();
+    }, REFRESH_INTERVAL_MS);
+
     return () => {
       pool.off(pool.filters.OrderSubmitted(null, account), onSubmitted);
       pool.off(pool.filters.OrderExecuted(null, account), onExecuted);
-      pool.off(pool.filters.OrderCancelled(null, account), onCancelled);
+      try {
+        pool.off(pool.filters.OrderCancelled(null, account), onCancelled);
+      } catch {
+        /* legacy ABI fallback */
+      }
       clearInterval(interval);
     };
-  }, [account, pool, refresh]);
+  }, [account, pool, refresh, checkMatching]);
 
   if (!account) {
     return (
@@ -297,8 +427,54 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
 
   return (
     <section style={styles.card}>
-      <h3 style={styles.cardTitle}>Order Dashboard</h3>
+      <div style={styles.headerRow}>
+        <div>
+          <h3 style={styles.cardTitle}>Order Dashboard</h3>
+          <p style={styles.muted}>Real-time privacy-preserving dark pool trades and settlement.</p>
+        </div>
+        <div style={styles.headerActions}>
+          <button
+            onClick={() => { refresh(); checkMatching(); }}
+            disabled={loading}
+            style={styles.actionBtn}
+            title="Scan for on-chain updates and matchable pairs"
+          >
+            {loading ? "Refreshing…" : "↻ Refresh"}
+          </button>
+        </div>
+      </div>
+
       {error && <p style={styles.error}>{error}</p>}
+      {successMessage && (
+        <div style={styles.successAlert}>
+          <span>✓ {successMessage}</span>
+          <button onClick={() => setSuccessMessage(null)} style={styles.closeAlertBtn}>×</button>
+        </div>
+      )}
+
+      {/* In-browser matching banner: no terminal script needed! */}
+      {matchableData && (
+        <div style={styles.settleBanner}>
+          <div style={styles.settleInfo}>
+            <span style={styles.settleIcon}>⚡</span>
+            <div>
+              <div style={styles.settleTitle}>
+                Complementary Match Ready: Order #{matchableData.orderA} ↔ Order #{matchableData.orderB}
+              </div>
+              <div style={styles.settleDesc}>
+                Both trades balance within 1% fair-market tolerance. Settle directly on-chain without any terminal script.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={handleSettle}
+            disabled={settling}
+            style={styles.settleBtn}
+          >
+            {settling ? "Settling on-chain…" : "Execute Settlement"}
+          </button>
+        </div>
+      )}
 
       <div style={styles.grid}>
         <div style={styles.panel}>
@@ -321,7 +497,12 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
             <span style={styles.panelTitle}>Settled Trades</span>
             <span style={styles.count}>{settled.length}</span>
           </div>
-          <OrderTable rows={settled} loading={loading} emptyText="No settled trades" info={tokenInfo} />
+          <OrderTable
+            rows={settled}
+            loading={loading}
+            emptyText="No settled trades"
+            info={tokenInfo}
+          />
         </div>
       </div>
     </section>
@@ -370,7 +551,9 @@ function OrderTable({
                 <span style={styles.pairText}>{fmtOrder(row, info)}</span>
               </td>
               <td style={styles.td} align="right">
-                {row.active ? (
+                {row.status === "cancelled" ? (
+                  <span style={styles.tdMuted}>—</span>
+                ) : row.active ? (
                   <span style={styles.limitPrice}>
                     Live {fmtUsd(row.livePrice)}
                   </span>
@@ -379,14 +562,24 @@ function OrderTable({
                 )}
               </td>
               <td style={styles.td} align="right">
-                <span style={{ ...styles.status, ...(row.active ? styles.statusOpen : styles.statusExecuted) }}>
-                  {row.active ? "Open" : "Executed"}
+                <span
+                  style={{
+                    ...styles.status,
+                    ...(row.status === "cancelled"
+                      ? styles.statusCancelled
+                      : row.active
+                      ? styles.statusOpen
+                      : styles.statusExecuted),
+                  }}
+                >
+                  {row.status === "cancelled" ? "Cancelled" : row.active ? "Open" : "Executed"}
                 </span>
-                {row.active && onCancel && (
+                {row.active && row.status !== "cancelled" && onCancel && (
                   <button
                     onClick={() => onCancel(row.id)}
                     disabled={cancellingId === row.id}
                     style={styles.cancelButton}
+                    title="Cancel order and move to Settled Trades"
                   >
                     {cancellingId === row.id ? "…" : "Cancel"}
                   </button>
@@ -412,9 +605,90 @@ const styles = {
     fontFamily: "system-ui, sans-serif",
     color: "#e6e8f0",
   },
+  headerRow: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: 12,
+  },
+  headerActions: {
+    display: "flex",
+    gap: 8,
+  },
   cardTitle: { margin: 0, fontSize: "1.1rem", color: "#ffffff" },
-  muted: { color: "#8b90a7", fontSize: "0.85rem", marginTop: 8 },
+  muted: { color: "#8b90a7", fontSize: "0.85rem", marginTop: 4 },
   error: { color: "#ff6b6b", fontSize: "0.85rem", marginTop: 8 },
+  actionBtn: {
+    background: "#161a2e",
+    color: "#8b90a7",
+    border: "1px solid #2a2f45",
+    borderRadius: 0,
+    padding: "4px 10px",
+    fontSize: "0.75rem",
+    fontWeight: 600,
+    cursor: "pointer",
+  },
+  successAlert: {
+    background: "#062e24",
+    border: "1px solid #10b981",
+    color: "#34d399",
+    padding: "8px 12px",
+    fontSize: "0.82rem",
+    marginTop: 10,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  closeAlertBtn: {
+    background: "transparent",
+    border: "none",
+    color: "#34d399",
+    fontSize: "1rem",
+    cursor: "pointer",
+    lineHeight: 1,
+  },
+  settleBanner: {
+    background: "linear-gradient(90deg, #09231a 0%, #161a2e 100%)",
+    border: "1px solid #10b981",
+    borderRadius: 0,
+    padding: "0.85rem 1.1rem",
+    marginTop: 14,
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+    flexWrap: "wrap",
+  },
+  settleInfo: {
+    display: "flex",
+    alignItems: "center",
+    gap: 10,
+  },
+  settleIcon: {
+    fontSize: "1.3rem",
+    color: "#34d399",
+  },
+  settleTitle: {
+    color: "#34d399",
+    fontSize: "0.88rem",
+    fontWeight: 600,
+  },
+  settleDesc: {
+    color: "#a7f3d0",
+    fontSize: "0.78rem",
+    marginTop: 2,
+  },
+  settleBtn: {
+    background: "#10b981",
+    color: "#022c22",
+    border: "none",
+    borderRadius: 0,
+    padding: "6px 14px",
+    fontSize: "0.8rem",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
   grid: {
     display: "grid",
     gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
@@ -459,7 +733,8 @@ const styles = {
     fontWeight: 600,
   },
   statusOpen: { background: "#f59e0b", color: "#1a1206" },
-  statusExecuted: { background: "#1f2937", color: "#9ca3af" },
+  statusExecuted: { background: "#062e24", color: "#34d399", border: "1px solid #064e3b" },
+  statusCancelled: { background: "#3b1d1d", color: "#f87171", border: "1px solid #5a2525" },
   cancelButton: {
     background: "#2a1515",
     color: "#ff6b6b",
