@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Contract, JsonRpcProvider, formatUnits } from "ethers";
-import { ZK_POOL_ABI, isNativeToken } from "./config";
+import { ZK_POOL_ABI, ZERO_ADDRESS, isNativeToken } from "./config";
 import type { NetworkConfig } from "../../config/networks";
 
 const REFRESH_INTERVAL_MS = 15000;
@@ -45,6 +45,12 @@ export default function LivePriceFeed({ network }: LivePriceFeedProps) {
   }, [network]);
 
   const loadPrice = async () => {
+    if (!network.POOL_ADDRESS || network.POOL_ADDRESS === ZERO_ADDRESS) {
+      setLoading(false);
+      setPrice("—");
+      setError(null);
+      return;
+    }
     try {
       const next = (await pool.getLatestPrice()) as bigint;
       if (prevRawRef.current != null) {

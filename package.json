@@ -4,6 +4,7 @@
   "private": true,
   "description": "ZK-KYC Dark Pool — institutional privacy-preserving trading on Sepolia",
   "scripts": {
+    "build": "cd frontend && npm install && npm run build",
     "start": "ts-node run-matcher.ts",
     "compile:circuits": "node scripts/compile-circuits.js",
     "compile": "node scripts/compile-circuits.js",

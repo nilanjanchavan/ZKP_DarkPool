@@ -245,8 +245,9 @@ export default function TradingTerminal({ account, network }: TradingTerminalPro
     }
   };
 
+  const isUndeployed = !network.POOL_ADDRESS || network.POOL_ADDRESS === ZERO_ADDRESS;
   const busy = status === "awaitingWallet" || status === "pending";
-  const submitDisabled = !account || busy || sameToken || needsApproval || amountParsed === null || amountParsed <= 0n;
+  const submitDisabled = !account || busy || sameToken || needsApproval || amountParsed === null || amountParsed <= 0n || isUndeployed;
 
   return (
     <div style={styles.card}>
@@ -256,6 +257,12 @@ export default function TradingTerminal({ account, network }: TradingTerminalPro
           ? `List a sell of one supported asset for another · pool ${network.POOL_ADDRESS}`
           : "Connect your wallet to trade."}
       </p>
+
+      {isUndeployed && (
+        <div style={styles.warningBox}>
+          <span>⚠️ ZK Dark Pool is currently deployed on <strong>Sepolia Testnet</strong>. Switch your network above to trade.</span>
+        </div>
+      )}
 
       <label style={styles.label}>
         <span style={styles.sellLabel}>Token to Sell</span>
@@ -475,4 +482,13 @@ const styles = {
   pending: { color: "#f5c66f", fontSize: "0.85rem", marginTop: 10 },
   success: { color: "#7dd3a8", fontSize: "0.85rem", marginTop: 10 },
   error: { color: "#ff6b6b", fontSize: "0.85rem", marginTop: 10 },
+  warningBox: {
+    background: "#2a1e0b",
+    border: "1px solid #b45309",
+    color: "#fde68a",
+    padding: "8px 12px",
+    fontSize: "0.82rem",
+    marginTop: 10,
+    marginBottom: 6,
+  },
 };

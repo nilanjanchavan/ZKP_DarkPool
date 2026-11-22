@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { DEFAULT_NETWORK, NETWORKS, getNetwork } from "../../config/networks";
+import { DEFAULT_NETWORK, NETWORKS, ZERO_ADDRESS, getNetwork } from "../../config/networks";
 import ConnectWallet from "./ConnectWallet";
 import LivePriceFeed from "./LivePriceFeed";
 import OrderDashboard from "./OrderDashboard";
@@ -32,14 +32,20 @@ export default function App() {
             <h1 style={styles.title}>ZK Dark Pool</h1>
             <p style={styles.subtitle}>
               Pool{" "}
-              <a
-                href={`${network.EXPLORER_URL}/address/${network.POOL_ADDRESS}`}
-                target="_blank"
-                rel="noreferrer"
-                style={styles.link}
-              >
-                {network.POOL_ADDRESS}
-              </a>
+              {network.POOL_ADDRESS && network.POOL_ADDRESS !== ZERO_ADDRESS ? (
+                <a
+                  href={`${network.EXPLORER_URL}/address/${network.POOL_ADDRESS}`}
+                  target="_blank"
+                  rel="noreferrer"
+                  style={styles.link}
+                >
+                  {network.POOL_ADDRESS}
+                </a>
+              ) : (
+                <span style={{ color: "#f59e0b", fontSize: "0.85rem" }}>
+                  Not deployed on {network.name} (Active on Sepolia)
+                </span>
+              )}
             </p>
           </div>
 

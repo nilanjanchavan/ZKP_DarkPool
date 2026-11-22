@@ -36,3 +36,4 @@ description: Professional UI/UX standards, design system rules, and Web3 trading
   - Show historical fill price or cancellation timestamp.
 - **In-Browser Match Engine**:
   - Surface automatic order pairing directly in the UI. If a complementary pair is detected on-chain, display an interactive "Match & Settle" notification or execute automatically so users do not need terminal scripts.
+
