@@ -1,10 +1,66 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Contract, JsonRpcProvider, formatUnits } from "ethers";
 import { ZK_POOL_ABI } from "./config";
 import { fetchTokenPrice } from "./prices";
 import type { NetworkConfig, NetworkToken } from "../../config/networks";
 
 const REFRESH_INTERVAL_MS = 15000;
+
+/**
+ * Safely queries logs in bounded block chunks to avoid RPC limits
+ * (such as error -32701: "exceed maximum block range: 50000").
+ * Automatically bisects chunks if the provider enforces an even tighter range limit.
+ */
+async function fetchLogsInChunks(
+  contract: Contract,
+  filter: any,
+  fromBlock: number,
+  toBlock: number,
+  maxChunkSize = 45000,
+  concurrency = 6
+): Promise<any[]> {
+  if (fromBlock > toBlock) return [];
+
+  async function fetchRange(start: number, end: number): Promise<any[]> {
+    try {
+      return await contract.queryFilter(filter, start, end);
+    } catch (err: any) {
+      const msg = err?.message || String(err);
+      const isRangeError =
+        msg.includes("exceed maximum block range") ||
+        msg.includes("block range") ||
+        err?.code === -32701 ||
+        err?.info?.error?.code === -32701 ||
+        err?.error?.code === -32701;
+
+      if (isRangeError && end > start) {
+        const mid = Math.floor((start + end) / 2);
+        const [left, right] = await Promise.all([
+          fetchRange(start, mid),
+          fetchRange(mid + 1, end),
+        ]);
+        return [...left, ...right];
+      }
+      console.warn(`OrderDashboard: log query failed for blocks [${start}, ${end}]:`, msg);
+      return [];
+    }
+  }
+
+  const ranges: [number, number][] = [];
+  for (let s = fromBlock; s <= toBlock; s += maxChunkSize) {
+    ranges.push([s, Math.min(s + maxChunkSize - 1, toBlock)]);
+  }
+
+  const allLogs: any[] = [];
+  for (let i = 0; i < ranges.length; i += concurrency) {
+    const batch = ranges.slice(i, i + concurrency);
+    const batchResults = await Promise.all(batch.map(([s, e]) => fetchRange(s, e)));
+    for (const res of batchResults) {
+      allLogs.push(...res);
+    }
+  }
+  return allLogs;
+}
 
 interface OrderRow {
   id: bigint;
@@ -75,6 +131,13 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const fillPriceCache = useRef<Map<string, bigint>>(new Map());
+
+  // Clear cached fill prices if account or network changes
+  useEffect(() => {
+    fillPriceCache.current.clear();
+  }, [account, network.chainId]);
+
   const tokens = useMemo<NetworkToken[]>(() => network.SUPPORTED_TOKENS, [network]);
   const provider = useMemo(() => new JsonRpcProvider(network.RPC_URL), [network]);
   const pool = useMemo(() => new Contract(network.POOL_ADDRESS, ZK_POOL_ABI, provider), [network, provider]);
@@ -124,14 +187,32 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
       }
 
       // Fill prices come from OrderExecuted (the Chainlink price at execution time).
-      const fillMap = new Map<string, bigint>();
-      const execEvents = await pool.queryFilter(
-        pool.filters.OrderExecuted(null, account),
-        network.POOL_FROM_BLOCK,
-        "latest"
-      );
-      for (const ev of execEvents) {
-        fillMap.set(ev.args.orderId.toString(), ev.args.fillPriceUSD);
+      // Only query logs if there are settled orders whose fill prices are not yet cached.
+      const settledOrders = orders.filter((o) => !o.active);
+      const missingSettled = settledOrders.filter((o) => !fillPriceCache.current.has(o.id.toString()));
+
+      if (missingSettled.length > 0) {
+        try {
+          const currentBlock = await provider.getBlockNumber();
+          const startBlock =
+            network.POOL_FROM_BLOCK > 0
+              ? network.POOL_FROM_BLOCK
+              : Math.max(0, currentBlock - 50000);
+
+          const execEvents = await fetchLogsInChunks(
+            pool,
+            pool.filters.OrderExecuted(null, account),
+            startBlock,
+            currentBlock
+          );
+          for (const ev of execEvents) {
+            if (ev.args?.orderId != null && ev.args?.fillPriceUSD != null) {
+              fillPriceCache.current.set(ev.args.orderId.toString(), ev.args.fillPriceUSD);
+            }
+          }
+        } catch (logErr) {
+          console.warn("OrderDashboard: failed to fetch OrderExecuted events:", logErr);
+        }
       }
 
       const sortDesc = (a: OrderRow, b: OrderRow) => (a.id > b.id ? -1 : 1);
@@ -146,11 +227,10 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
           .sort(sortDesc)
       );
       setSettled(
-        orders
-          .filter((o) => !o.active)
+        settledOrders
           .map((o) => ({
             ...o,
-            fillPrice: fillMap.get(o.id.toString()) ?? null,
+            fillPrice: fillPriceCache.current.get(o.id.toString()) ?? null,
             priceOut: priceMap.get(o.tokenOut.toLowerCase()) ?? null,
           }))
           .sort(sortDesc)
