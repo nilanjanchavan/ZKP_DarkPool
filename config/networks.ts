@@ -92,10 +92,10 @@ export const NETWORKS: Record<number, NetworkConfig> = {
   11155111: {
     chainId: 11155111,
     name: "Sepolia Testnet",
-    POOL_ADDRESS: "0xBBbF96F31CFaa790F9Bb11D7729df61eDbc40092", // demo deploy (unguarded performUpkeep), 2026-08-17
+    POOL_ADDRESS: "0x14b9f710DBcB52123B34722b29aE6aBFE156Db87", // deployed 2026-11-22 with cancelOrder & SafeERC20
     RPC_URL: "https://ethereum-sepolia-rpc.publicnode.com",
     EXPLORER_URL: "https://sepolia.etherscan.io",
-    POOL_FROM_BLOCK: 11508216,
+    POOL_FROM_BLOCK: 12187305,
     SUPPORTED_TOKENS: [
       {
         symbol: "ETH",

@@ -237,9 +237,9 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
         }
       }
 
-      // Only query logs if there are on-chain settled orders whose fill prices are not yet cached
-      const settledOnChain = orders.filter((o) => !o.active && !cancelledIds.has(o.id.toString()));
-      const missingSettled = settledOnChain.filter((o) => !fillPriceCache.current.has(o.id.toString()));
+      // Only query logs if there are on-chain settled orders whose fill prices/statuses are not yet cached
+      const settledOnChain = orders.filter((o) => !o.active);
+      const missingSettled = settledOnChain.filter((o) => !fillPriceCache.current.has(o.id.toString()) && !cancelledIds.has(o.id.toString()));
 
       if (missingSettled.length > 0) {
         try {
@@ -249,19 +249,47 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
               ? network.POOL_FROM_BLOCK
               : Math.max(0, currentBlock - 50000);
 
-          const execEvents = await fetchLogsInChunks(
-            pool,
-            pool.filters.OrderExecuted(null, account),
-            startBlock,
-            currentBlock
-          );
+          const [execEvents, cancelEvents] = await Promise.all([
+            fetchLogsInChunks(
+              pool,
+              pool.filters.OrderExecuted(null, account),
+              startBlock,
+              currentBlock
+            ),
+            fetchLogsInChunks(
+              pool,
+              pool.filters.OrderCancelled(null, account),
+              startBlock,
+              currentBlock
+            ).catch(() => []),
+          ]);
+
           for (const ev of execEvents) {
             if (ev.args?.orderId != null && ev.args?.fillPriceUSD != null) {
               fillPriceCache.current.set(ev.args.orderId.toString(), ev.args.fillPriceUSD);
             }
           }
+
+          let addedCancels = false;
+          for (const ev of cancelEvents) {
+            if (ev.args?.orderId != null) {
+              const id = ev.args.orderId.toString();
+              if (!cancelledIds.has(id)) {
+                cancelledIds.add(id);
+                addedCancels = true;
+              }
+            }
+          }
+          if (addedCancels) {
+            try {
+              localStorage.setItem(
+                `darkpool_cancelled_${network.chainId}_${account.toLowerCase()}`,
+                JSON.stringify(Array.from(cancelledIds))
+              );
+            } catch {}
+          }
         } catch (logErr) {
-          console.warn("OrderDashboard: failed to fetch OrderExecuted events:", logErr);
+          console.warn("OrderDashboard: failed to fetch event logs:", logErr);
         }
       }
 
@@ -317,6 +345,7 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
     setCancellingId(orderId);
     setError(null);
 
+    let wasOnChain = false;
     // Attempt on-chain cancellation first if the contract supports it
     try {
       const browserProvider = createBrowserProvider();
@@ -326,6 +355,7 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
       try {
         const tx = await poolWithSigner.cancelOrder(orderId);
         await tx.wait();
+        wasOnChain = true;
       } catch (onChainErr: any) {
         // If rejected by user in wallet, cancel action was aborted
         if (onChainErr?.code === "ACTION_REJECTED" || onChainErr?.code === 4001) {
@@ -354,7 +384,11 @@ export default function OrderDashboard({ account, network }: OrderDashboardProps
     }
     setCancelledIds(updated);
     setCancellingId(null);
-    setSuccessMessage(`Order #${orderId} was cancelled and moved to Settled Trades.`);
+    setSuccessMessage(
+      wasOnChain
+        ? `Order #${orderId} cancelled on-chain. Refund transferred to your wallet!`
+        : `Order #${orderId} was cancelled and moved to Settled Trades.`
+    );
     setTimeout(() => setSuccessMessage(null), 5000);
   };
 
