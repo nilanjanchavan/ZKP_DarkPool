@@ -57,6 +57,8 @@ for (const sig of [
   "SameToken()",
   "IncorrectEthValue()",
   "UnsupportedToken()",
+  "NotOrderTrader()",
+  "OrderNotActive()",
   "EnforcedPause()",
 ]) {
   KNOWN_ERRORS[ethers.id(sig).slice(0, 10)] = sig;
